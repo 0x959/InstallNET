@@ -1371,7 +1371,9 @@ if [ "$loaderMode" = '0' ]; then
   cp -f "$baseline" /tmp/grub.source || die "Failed to copy GRUB configuration."
   if [ "$DRY_RUN" != '1' ]; then
     cp -f "$GRUBDIR/$GRUBFILE" "$GRUBDIR/$GRUBFILE.bak" || die "Failed to back up GRUB configuration."
-    cp -f "$baseline" "$GRUBDIR/$GRUBFILE" || die "Failed to prepare GRUB configuration."
+    if [ "$baseline" != "$GRUBDIR/$GRUBFILE" ]; then
+      cp -f "$baseline" "$GRUBDIR/$GRUBFILE" || die "Failed to prepare GRUB configuration."
+    fi
   fi
 
   if [ "$GRUBVER" = '0' ]; then
