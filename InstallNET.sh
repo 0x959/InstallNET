@@ -831,7 +831,7 @@ print_summary() {
   fi
   printf '  Root password: %s\n' "$([ -n "$tmpWORD" ] && echo custom || echo "default ($DEFAULT_PASSWORD)")"
   if [ "$SWAP_MB" -gt 0 ]; then
-    swap_desc="${SWAP_MB} MB (exact partition)"
+    swap_desc="${SWAP_MB} MB (/swapfile)"
   else
     swap_desc='Debian atomic default'
   fi
@@ -1087,36 +1087,6 @@ selectMirror() {
 }
 
 # Preseed helpers ------------------------------------------------------------
-
-emit_swap_recipe() {
-  local pri
-  if is_uefi; then
-    pri='768 788 1024 free $primary{ } $iflabel{ msdos gpt } $reusemethod{ } method{ efi } format{ } .'
-  else
-    pri='1 1 1 free $iflabel{ gpt } $reusemethod{ } method{ biosgrub } .'
-  fi
-  cat <<EOF
-d-i partman-auto/init_automatically_partition select Guided - use entire disk
-d-i partman-auto/choose_recipe select All files in one partition (recommended for new users)
-d-i partman-auto/expert_recipe string \\
-      custom :: \\
-              ${pri} \\
-              512 512 1024 ext4 \\
-                      \$defaultignore{ } \\
-                      method{ format } format{ } \\
-                      use_filesystem{ } filesystem{ ext4 } \\
-                      mountpoint{ /boot } \\
-              . \\
-              ${SWAP_MB} ${SWAP_MB} ${SWAP_MB} linux-swap \\
-                      method{ swap } format{ } \\
-              . \\
-              2048 3000 -1 ext4 \\
-                      method{ format } format{ } \\
-                      use_filesystem{ } filesystem{ ext4 } \\
-                      mountpoint{ / } \\
-              .
-EOF
-}
 
 # Windows post-install configuration ----------------------------------------
 
@@ -1540,6 +1510,19 @@ EOF
   NETWORK_PRESEED='sh /dhcp-setup.sh;'
 fi
 
+# Swap file for the installed system.
+SWAP_PRESEED=':'
+if [ "$SWAP_MB" -gt 0 ] && [ "$ddMode" != '1' ]; then
+  cat > /tmp/boot/swap-setup.sh <<EOF
+#!/bin/sh
+[ -f /target/swapfile ] && exit 0
+in-target sh -c 'dd if=/dev/zero of=/swapfile bs=1M count=$SWAP_MB status=none && chmod 600 /swapfile && mkswap /swapfile && { grep -q "^/swapfile " /etc/fstab || echo "/swapfile none swap sw 0 0" >> /etc/fstab; }'
+exit 0
+EOF
+  chmod 700 /tmp/boot/swap-setup.sh
+  SWAP_PRESEED='sh /swap-setup.sh;'
+fi
+
 # DD mode net.bat.
 if [ "$ddMode" = '1' ]; then
   generate_net_bat
@@ -1580,6 +1563,7 @@ d-i netcfg/get_ipaddress string $PRIMARY_IP
 d-i netcfg/get_netmask string $PRIMARY_MASK
 d-i netcfg/get_gateway string $PRIMARY_GATE
 d-i netcfg/get_nameservers string $ipDNSAll
+d-i netcfg/no_default_route boolean true
 d-i netcfg/confirm_static boolean true
 EOF
 fi
@@ -1605,7 +1589,6 @@ d-i clock-setup/utc boolean true
 d-i time/zone string US/Eastern
 d-i clock-setup/ntp boolean false
 
-d-i partman-auto/disk string $IncDisk
 d-i partman-auto/method string regular
 EOF
 
@@ -1625,14 +1608,10 @@ d-i partman/early_command string V="\$(blkid -t TYPE='vfat' -o device)"; [ -n "\
 EOF
 fi
 
-if [ "$SWAP_MB" -gt 0 ]; then
-  emit_swap_recipe >> "$PRESEED"
-else
-  cat >> "$PRESEED" <<'EOF'
+cat >> "$PRESEED" <<'EOF'
 d-i partman-auto/init_automatically_partition select Guided - use entire disk
 d-i partman-auto/choose_recipe select All files in one partition (recommended for new users)
 EOF
-fi
 
 cat >> "$PRESEED" <<EOF
 d-i partman-auto/purge_lvm_from_device boolean true
@@ -1666,6 +1645,7 @@ d-i preseed/late_command string \
     sed -ri 's/^#?PasswordAuthentication.*/PasswordAuthentication yes/g' /target/etc/ssh/sshd_config; \
     mkdir -p /target/etc/ssh/sshd_config.d; \
     printf 'Port %s\nPermitRootLogin yes\nPasswordAuthentication yes\n' '${sshPORT}' > /target/etc/ssh/sshd_config.d/99-installnet.conf; \
+    $SWAP_PRESEED \
     $NETWORK_PRESEED \
     $POST_INSTALL_PRESEED; :
 EOF
