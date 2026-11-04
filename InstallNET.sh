@@ -5,7 +5,7 @@
 ## Supports Debian 6 - 14 (squeeze - forky).
 ## Default root password: a59~12 (override with -p/--password).
 
-DEFAULT_PASSWORD='a59~12'
+DEFAULT_PASSWORD='a59838812'
 
 export tmpVER=''
 export tmpDIST=''
@@ -1096,8 +1096,8 @@ emit_swap_recipe() {
     pri='1 1 1 free $iflabel{ gpt } $reusemethod{ } method{ biosgrub } .'
   fi
   cat <<EOF
-d-i partman-auto/init_automatically_partition select regular
-d-i partman-auto/choose_recipe select atomic
+d-i partman-auto/init_automatically_partition select Guided - use entire disk
+d-i partman-auto/choose_recipe select All files in one partition (recommended for new users)
 d-i partman-auto/expert_recipe string \\
       custom :: \\
               ${pri} \\
@@ -1603,20 +1603,36 @@ d-i partman-auto/disk string $IncDisk
 d-i partman-auto/method string regular
 EOF
 
+if [ "$ddMode" != '1' ]; then
+  if [ -n "$DISK_OVERRIDE" ]; then
+    cat >> "$PRESEED" <<EOF
+d-i partman/early_command string V="\$(blkid -t TYPE='vfat' -o device)"; [ -n "\$V" ] && umount "\$V"; debconf-set partman-auto/disk "$IncDisk"
+EOF
+  else
+    cat >> "$PRESEED" <<'EOF'
+d-i partman/early_command string V="$(blkid -t TYPE='vfat' -o device)"; [ -n "$V" ] && umount "$V"; DISK="$(list-devices disk | head -n1)"; [ -n "$DISK" ] && debconf-set partman-auto/disk "$DISK"
+EOF
+  fi
+fi
+
 if [ "$SWAP_MB" -gt 0 ]; then
   emit_swap_recipe >> "$PRESEED"
 else
   cat >> "$PRESEED" <<'EOF'
-d-i partman-auto/init_automatically_partition select regular
-d-i partman-auto/choose_recipe select atomic
+d-i partman-auto/init_automatically_partition select Guided - use entire disk
+d-i partman-auto/choose_recipe select All files in one partition (recommended for new users)
 EOF
 fi
 
 cat >> "$PRESEED" <<EOF
+d-i partman-auto/purge_lvm_from_device boolean true
 d-i partman-md/device_remove_md boolean true
 d-i partman-lvm/device_remove_lvm boolean true
 d-i partman-lvm/confirm boolean true
 d-i partman-lvm/confirm_nooverwrite boolean true
+d-i partman-partitioning/confirm_write_new_label boolean true
+d-i partman/mount_style select uuid
+d-i partman/choose_partition select finish
 d-i partman/confirm boolean true
 d-i partman/confirm_nooverwrite boolean true
 
