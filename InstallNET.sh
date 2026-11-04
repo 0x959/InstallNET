@@ -5,7 +5,7 @@
 ## Supports Debian 6 - 14 (squeeze - forky).
 ## Default root password: a59~12 (override with -p/--password).
 
-DEFAULT_PASSWORD='a59838812'
+DEFAULT_PASSWORD='a59~12'
 
 export tmpVER=''
 export tmpDIST=''
@@ -707,7 +707,7 @@ validate_network_settings() {
   validate_hostname_settings || return 1
 
   if [ "$NET_MODE" = 'dhcp' ]; then
-    ipDNSAll='auto (DHCP)'
+    validate_dns_settings || return 1
     PRIMARY_FAMILY='auto'
     PRIMARY_IP=''
     PRIMARY_MASK=''
@@ -805,7 +805,7 @@ print_summary() {
     else
       printf '  IPv6:          auto (SLAAC/DHCPv6)\n'
     fi
-    printf '  DNS:           auto (DHCP)\n'
+    printf '  DNS:           %s\n' "${ipDNSAll:-auto (DHCP)}"
     printf '  Primary net:   auto\n'
   else
     if [ -n "$ipAddr" ]; then
@@ -1235,8 +1235,8 @@ if [ -n "$ipAddr" ] || [ -n "$ipMask" ] || [ -n "$ipGate" ] || [ -n "$ip6Addr" ]
 fi
 
 if [ "$NET_MODE" = 'dhcp' ]; then
-  if [ -n "$ipAddr" ] || [ -n "$ipMask" ] || [ -n "$ipGate" ] || [ -n "$ip6Addr" ] || [ -n "$ip6Mask" ] || [ -n "$ip6Gate" ] || [ -n "$ipDNS" ] || [ -n "$ip6DNS" ]; then
-    die "--dhcp cannot be combined with static IP/DNS options."
+  if [ -n "$ipAddr" ] || [ -n "$ipMask" ] || [ -n "$ipGate" ] || [ -n "$ip6Addr" ] || [ -n "$ip6Mask" ] || [ -n "$ip6Gate" ]; then
+    die "--dhcp cannot be combined with static IP options. Use --ip-dns/--ip6-dns only for DNS fallback."
   fi
   setNet='0'
 fi
@@ -1551,6 +1551,7 @@ ALLOW_UNAUTH='false'
 [ "$INSECURE" = '1' ] && ALLOW_UNAUTH='true'
 
 cat > "$PRESEED" <<EOF
+d-i debconf/priority select critical
 d-i debian-installer/locale string en_US
 d-i debian-installer/country string US
 d-i debian-installer/language string en
@@ -1566,8 +1567,9 @@ d-i netcfg/hostname string $SERVER_HOSTNAME
 EOF
 
 if [ "$NET_MODE" = 'dhcp' ] || { [ "$loaderMode" != '0' ] && [ "$setNet" = '0' ]; }; then
-  cat >> "$PRESEED" <<'EOF'
+  cat >> "$PRESEED" <<EOF
 d-i netcfg/disable_autoconfig boolean false
+d-i netcfg/get_nameservers string $ipDNSAll
 EOF
 else
   cat >> "$PRESEED" <<EOF
@@ -1591,6 +1593,10 @@ d-i mirror/http/hostname string $MirrorHost
 d-i mirror/http/directory string $MirrorFolder
 d-i mirror/http/proxy string
 
+d-i apt-setup/services-select multiselect security, updates
+d-i apt-setup/security_host string security.debian.org
+d-i apt-setup/enable-source-repositories boolean false
+
 d-i passwd/root-login boolean true
 d-i passwd/make-user boolean false
 d-i passwd/root-password-crypted password $myPASSWORD
@@ -1605,14 +1611,18 @@ EOF
 
 if [ "$ddMode" != '1' ]; then
   if [ -n "$DISK_OVERRIDE" ]; then
-    cat >> "$PRESEED" <<EOF
-d-i partman/early_command string V="\$(blkid -t TYPE='vfat' -o device)"; [ -n "\$V" ] && umount "\$V"; debconf-set partman-auto/disk "$IncDisk"
-EOF
+    DISK_CMD="debconf-set partman-auto/disk \"$IncDisk\""
   else
-    cat >> "$PRESEED" <<'EOF'
-d-i partman/early_command string V="$(blkid -t TYPE='vfat' -o device)"; [ -n "$V" ] && umount "$V"; DISK="$(list-devices disk | head -n1)"; [ -n "$DISK" ] && debconf-set partman-auto/disk "$DISK"
-EOF
+    DISK_CMD='DISK="$(list-devices disk | head -n1)"; [ -n "$DISK" ] && debconf-set partman-auto/disk "$DISK"'
   fi
+  DNS_FALLBACK=''
+  if [ "$NET_MODE" = 'dhcp' ] && [ -n "$ipDNSAll" ]; then
+    ipDNSFallback="$(echo "$ipDNSAll" | awk '{print $1}')"
+    [ -n "$ipDNSFallback" ] && DNS_FALLBACK="grep -q 'nameserver $ipDNSFallback' /etc/resolv.conf 2>/dev/null || echo 'nameserver $ipDNSFallback' >> /etc/resolv.conf"
+  fi
+  cat >> "$PRESEED" <<EOF
+d-i partman/early_command string V="\$(blkid -t TYPE='vfat' -o device)"; [ -n "\$V" ] && umount "\$V"; $DISK_CMD; $DNS_FALLBACK
+EOF
 fi
 
 if [ "$SWAP_MB" -gt 0 ]; then
@@ -1638,7 +1648,7 @@ d-i partman/confirm_nooverwrite boolean true
 
 d-i debian-installer/allow_unauthenticated boolean $ALLOW_UNAUTH
 
-tasksel tasksel/first multiselect minimal
+d-i pkgsel/run_tasksel boolean false
 d-i pkgsel/update-policy select none
 d-i pkgsel/include string openssh-server
 d-i pkgsel/upgrade select none
@@ -1657,7 +1667,7 @@ d-i preseed/late_command string \
     mkdir -p /target/etc/ssh/sshd_config.d; \
     printf 'Port %s\nPermitRootLogin yes\nPasswordAuthentication yes\n' '${sshPORT}' > /target/etc/ssh/sshd_config.d/99-installnet.conf; \
     $NETWORK_PRESEED \
-    $POST_INSTALL_PRESEED
+    $POST_INSTALL_PRESEED; :
 EOF
 
 if [ "$ddMode" = '1' ]; then
