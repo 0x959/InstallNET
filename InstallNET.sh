@@ -1644,7 +1644,9 @@ d-i preseed/late_command string \
     sed -ri 's/^#?PermitRootLogin.*/PermitRootLogin yes/g' /target/etc/ssh/sshd_config; \
     sed -ri 's/^#?PasswordAuthentication.*/PasswordAuthentication yes/g' /target/etc/ssh/sshd_config; \
     mkdir -p /target/etc/ssh/sshd_config.d; \
-    printf 'Port %s\nPermitRootLogin yes\nPasswordAuthentication yes\n' '${sshPORT}' > /target/etc/ssh/sshd_config.d/99-installnet.conf; \
+    echo 'Port ${sshPORT}' > /target/etc/ssh/sshd_config.d/99-installnet.conf; \
+    echo 'PermitRootLogin yes' >> /target/etc/ssh/sshd_config.d/99-installnet.conf; \
+    echo 'PasswordAuthentication yes' >> /target/etc/ssh/sshd_config.d/99-installnet.conf; \
     $SWAP_PRESEED \
     $NETWORK_PRESEED \
     $POST_INSTALL_PRESEED; :
